@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NASA Rocket Racer - Space Mission</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background-color: #050510;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+            color: #fff;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 20px 50px rgba(0, 212, 255, 0.2);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid rgba(0, 212, 255, 0.3);
+        }
+        canvas {
+            display: block;
+            background: linear-gradient(to bottom, #020208, #07071a);
+        }
+        /* UI Overlays */
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(5, 5, 15, 0.75);
+            backdrop-filter: blur(4px);
+            transition: opacity 0.3s ease;
+            z-index: 10;
+        }
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            margin-bottom: 10px;
+            text-align: center;
+            background: linear-gradient(45deg, #00d4ff, #ffffff, #ff007f);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
+        }
+        p {
+            font-size: 1rem;
+            color: #a0aec0;
+            margin-bottom: 30px;
+            text-align: center;
+            max-width: 80%;
+            line-height: 1.5;
+        }
+        .btn {
+            background: linear-gradient(135deg, #0052d4, #4364f7, #6fb1fc);
+            color: white;
+            border: none;
+            padding: 14px 40px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(67, 100, 247, 0.4);
+            transition: all 0.2s ease;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 212, 255, 0.6);
+        }
+        .btn:active {
+            transform: translateY(1px);
+        }
+        .stats-container {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 25px;
+            min-width: 250px;
+            text-align: center;
+        }
+        .stat-line {
+            font-size: 1.2rem;
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+        .stat-label { color: #8492a6; }
+        .stat-val { font-weight: bold; color: #00d4ff; }
+        .controls-hint {
+            margin-top: 20px;
+            font-size: 0.85rem;
+            color: #4a5568;
+            border-top: 1px solid rgba(255,255,255,0.05);
+            padding-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="480" height="640"></canvas>
+
+        <div id="start-screen" class="overlay">
+            <h1>Artemis Dash</h1>
+            <p>Navigate the experimental NASA Orion star-probe through the deep-space satellite network communication array.</p>
+            <button class="btn" id="start-btn">Launch Mission</button>
+            <div class="controls-hint">PRESS [SPACEBAR] OR CLICK TO THRUST</div>
+        </div>
+
+        <div id="game-over-screen" class="overlay hidden">
+            <h1>Mission Failure</h1>
+            <p id="fail-reason">Telemetry link lost due to collision.</p>
+            <div class="stats-container">
+                <div class="stat-line">
+                    <span class="stat-label">Distance:</span>
+                    <span class="stat-val" id="final-score">0 AU</span>
+                </div>
+                <div class="stat-line">
+                    <span class="stat-label">Record:</span>
+                    <span class="stat-val" id="high-score">0 AU</span>
+                </div>
+            </div>
+            <button class="btn" id="restart-btn">Re-Launch</button>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // UI elements
+    const startScreen = document.getElementById('start-screen');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const startBtn = document.getElementById('start-btn');
+    const restartBtn = document.getElementById('restart-btn');
+    const finalScoreTxt = document.getElementById('final-score');
+    const highScoreTxt = document.getElementById('high-score');
+
+    // Game States
+    const STATES = { START: 0, PLAYING: 1, GAMEOVER: 2 };
+    let gameState = STATES.START;
+
+    // Game variables
+    let score = 0;
+    let localHighScore = localStorage.getItem('nasa_high_score') || 0;
+    let frameCount = 0;
+    let obstacles = [];
+    let particles = [];
+    let starsBase = [];
+    let starsMid = [];
+    let nebulae = [];
+
+    // Physics Configurations (Balanced for responsive & satisfying feel)
+    const PHYSICS = {
+        gravity: 0.24,
+        thrust: -5.5,
+        maxVelocity: 8,
+        minVelocity: -8,
+        obstacleSpeed: 2.5,
+        obstacleSpawnRate: 110, // frames between spawn
+        gapHeight: 160 // Opening width between satellites
+    };
+
+    // Rocket Object
+    const rocket = {
+        x: 90,
+        y: 300,
+        width: 46,
+        height: 26,
+        velocity: 0,
+        angle: 0,
+        targetAngle: 0,
+        radius: 14, // For forgiving geometric hit-box circle
+        fuel: 100,
+        thrusting: false
+    };
+
+    // --- INITIALIZATION ---
+    function init() {
+        generateStarfield();
+        setupEventListeners();
+        resetGame();
+        animate();
+    }
+
+    // Procedural generation of space environment backgrounds
+    function generateStarfield() {
+        // Distant stars layer (slow)
+        for (let i = 0; i < 60; i++) {
+            starsBase.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 1.5,
+                speed: 0.2
+            });
+        }
+        // Mid-ground stars (faster)
+        for (let i = 0; i < 30; i++) {
+            starsMid.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2 + 1,
+                speed: 0.5,
+                color: ['#00d4ff', '#ffffff', '#ff9e00'][Math.floor(Math.random() * 3)]
+            });
+        }
+        // Nebulae structures
+        for (let i = 0; i < 3; i++) {
+            nebulae.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                radius: Math.random() * 100 + 80,
+                color: `rgba(${Math.floor(Math.random()*100)}, 0, ${Math.floor(Math.random()*150 + 100)}, 0.06)`
+            });
+        }
+    }
+
+    function setupEventListeners() {
+        const triggerThrust = () => {
+            if (gameState === STATES.PLAYING) {
+                rocket.velocity = PHYSICS.thrust;
+                rocket.thrusting = true;
+                createThrusterPlume();
+            }
+        };
+
+        // Input triggers
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (gameState === STATES.PLAYING) triggerThrust();
+            }
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            triggerThrust();
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            triggerThrust();
+        }, { passive: false });
+
+        // Buttons
+        startBtn.addEventListener('click', () => {
+            startScreen.classList.add('hidden');
+            gameState = STATES.PLAYING;
+        });
+
+        restartBtn.addEventListener('click', () => {
+            gameOverScreen.classList.add('hidden');
+            resetGame();
+            gameState = STATES.PLAYING;
+        });
+    }
+
+    function resetGame() {
+        rocket.y = 260;
+        rocket.velocity = 0;
+        rocket.angle = 0;
+        rocket.fuel = 100;
+        score = 0;
+        frameCount = 0;
+        obstacles = [];
+        particles = [];
+    }
+
+    // --- GAME ENGINE LOOP ---
+    function animate() {
+        update();
+        render();
+        requestAnimationFrame(animate);
+    }
+
+    // --- LOGIC AND MATH SYSTEM ---
+    function update() {
+        frameCount++;
+
+        // 1. Move Backgrounds (Parallax Scrolling effect)
+        starsBase.forEach(star => {
+            star.x -= star.speed;
+            if (star.x < 0) star.x = canvas.width;
+        });
+        starsMid.forEach(star => {
+            star.x -= star.speed;
+            if (star.x < 0) star.x = canvas.width;
+        });
+
+        if (gameState !== STATES.PLAYING) {
+            // Decay engine fire visual on start screen/game over
+            particles.forEach((p, index) => {
+                p.x += p.vx; p.y += p.vy; p.alpha -= 0.02;
+                if (p.alpha <= 0) particles.splice(index, 1);
+            });
+            return;
+        }
+
+        // 2. Physics Model for Rocket
+        rocket.velocity += PHYSICS.gravity;
+        if (rocket.velocity > PHYSICS.maxVelocity) rocket.velocity = PHYSICS.maxVelocity;
+        if (rocket.velocity < PHYSICS.minVelocity) rocket.velocity = PHYSICS.minVelocity;
+        rocket.y += rocket.velocity;
+
+        // Visual Angular Interpolation (Tilting mechanism)
+        if (rocket.velocity < 0) {
+            rocket.targetAngle = -0.35; // Point up
+        } else if (rocket.velocity > 2) {
+            rocket.targetAngle = 0.55;  // Nose down dive
+        } else {
+            rocket.targetAngle = 0;
+        }
+        rocket.angle += (rocket.targetAngle - rocket.angle) * 0.12;
+
+        // Engine fuel depletion and engine flame logic
+        if (rocket.thrusting) {
+            rocket.fuel = Math.max(0, rocket.fuel - 0.1);
+            rocket.thrusting = false; // reset flag
+        }
+
+        // Bound validation
+        if (rocket.y - rocket.height/2 < 0) {
+            rocket.y = rocket.height/2;
+            rocket.velocity = 0;
+        }
+        if (rocket.y + rocket.height/2 > canvas.height) {
+            endMission();
+        }
+
+        // 3. System Engine: Particles
+        updateParticles();
+
+        // 4. Object Handling: Satellites Arrays
+        if (frameCount % PHYSICS.obstacleSpawnRate === 0) {
+            spawnSatelliteArray();
+        }
+
+        updateSatellites();
+    }
+
+    function createThrusterPlume() {
+        // Emit high-energy trail behind the ship offset from current vector
+        const backX = rocket.x - 22 * Math.cos(rocket.angle);
+        const backY = rocket.y - 22 * Math.sin(rocket.angle);
+
+        for (let i = 0; i < 12; i++) {
+            particles.push({
+                x: backX,
+                y: backY,
+                vx: -PHYSICS.obstacleSpeed - (Math.random() * 3 + 2) * Math.cos(rocket.angle + (Math.random() - 0.5) * 0.4),
+                vy: (Math.random() - 0.5) * 2 + rocket.velocity * 0.3,
+                size: Math.random() * 6 + 3,
+                color: Math.random() > 0.4 ? '#ff5500' : '#ffcc00',
+                alpha: 1
+            });
+        }
+    }
+
+    function updateParticles() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.alpha -= 0.025;
+            p.size *= 0.96;
+            if (p.alpha <= 0 || p.size < 0.5) {
+                particles.splice(i, 1);
+            }
+        }
+    }
+
+    function spawnSatelliteArray() {
+        const minHeight = 80;
+        const maxHeight = canvas.height - PHYSICS.gapHeight - minHeight;
+        const topHeight = Math.floor(Math.random() * (maxHeight - minHeight + 1) + minHeight);
+        const bottomHeight = canvas.height - PHYSICS.gapHeight - topHeight;
+
+        obstacles.push({
+            x: canvas.width + 60,
+            topHeight: topHeight,
+            bottomHeight: bottomHeight,
+            width: 54,
+            passed: false,
+            pulse: 0 // animation variance
+        });
+    }
+
+    function updateSatellites() {
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            let obs = obstacles[i];
+            obs.x -= PHYSICS.obstacleSpeed;
+            obs.pulse += 0.05;
+
+            // Score check
+            if (!obs.passed && obs.x + obs.width < rocket.x) {
+                score++;
+                obs.passed = true;
+            }
+
+            // High Precision Forgiving Hitbox Collisions 
+            // Shrink obstacle width slightly to prevent unfair corner clipping
+            const visualPadding = 6;
+            if (rocket.x + rocket.radius > obs.x + visualPadding && 
+                rocket.x - rocket.radius < obs.x + obs.width - visualPadding) {
+                
+                // Crash into Top system
+                if (rocket.y - rocket.radius < obs.topHeight) {
+                    endMission();
+                }
+                // Crash into Bottom system
+                if (rocket.y + rocket.radius > canvas.height - obs.bottomHeight) {
+                    endMission();
+                }
+            }
+
+            // Cleanup arrays offscreen
+            if (obs.x + obs.width < -100) {
+                obstacles.splice(i, 1);
+            }
+        }
+    }
+
+    function endMission() {
+        gameState = STATES.GAMEOVER;
+        if (score > localHighScore) {
+            localHighScore = score;
+            localStorage.setItem('nasa_high_score', localHighScore);
+        }
+        finalScoreTxt.innerText = `${score} AU`;
+        highScoreTxt.innerText = `${localHighScore} AU`;
+        gameOverScreen.classList.remove('hidden');
+    }
+
+    // --- ARTWORK AND RENDERING LAYER ---
+    function render() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 1. Draw Space Matrices
+        drawNebulae();
+        drawStarfield();
+
+        // 2. Draw Environment Particles
+        drawParticles();
+
+        // 3. Draw Deep Space Communication Obstacles
+        drawSatellites();
+
+        // 4. Draw Core Rocket Actor
+        drawRocket();
+
+        // 5. Draw HUD System Layer
+        drawHUD();
+    }
+
+    function drawNebulae() {
+        nebulae.forEach(n => {
+            let radGrd = ctx.createRadialGradient(n.x, n.y, 10, n.x, n.y, n.radius);
+            radGrd.addColorStop(0, n.color);
+            radGrd.addColorStop(1, 'transparent');
+            ctx.fillStyle = radGrd;
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+            ctx.fill();
+        });
+    }
+
+    function drawStarfield() {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+        starsBase.forEach(star => {
+            ctx.fillRect(star.x, star.y, star.size, star.size);
+        });
+
+        starsMid.forEach(star => {
+            ctx.fillStyle = star.color;
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.size/2, 0, Math.PI*2);
+            ctx.fill();
+        });
+    }
+
+    function drawParticles() {
+        ctx.save();
+        particles.forEach(p => {
+            ctx.globalAlpha = p.alpha;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.restore();
+    }
+
+    function drawRocket() {
+        ctx.save();
+        ctx.translate(rocket.x, rocket.y);
+        ctx.rotate(rocket.angle);
+
+        // Core dynamic vector definitions for high-res NASA stylized rocket
+        // Fuselage Main Cylinder
+        let bodyGrd = ctx.createLinearGradient(0, -10, 0, 10);
+        bodyGrd.addColorStop(0, '#ffffff');
+        bodyGrd.addColorStop(0.5, '#dcdde1');
+        bodyGrd.addColorStop(1, '#7f8c8d');
+        ctx.fillStyle = bodyGrd;
+        ctx.beginPath();
+        ctx.moveTo(-18, -10);
+        ctx.lineTo(10, -10);
+        ctx.quadraticCurveTo(24, 0, 10, 10);
+        ctx.lineTo(-18, 10);
+        ctx.closePath();
+        ctx.fill();
+
+        // NASA Nosecone Re-entry Shield
+        ctx.fillStyle = '#e74c3c';
+        ctx.beginPath();
+        ctx.moveTo(10, -10);
+        ctx.quadraticCurveTo(28, 0, 10, 10);
+        ctx.closePath();
+        ctx.fill();
+
+        // Stabilization Dynamic Tail Fin
+        ctx.fillStyle = '#2c3e50';
+        ctx.beginPath();
+        ctx.moveTo(-18, -10);
+        ctx.lineTo(-24, -15);
+        ctx.lineTo(-22, 0);
+        ctx.lineTo(-24, 15);
+        ctx.lineTo(-18, 10);
+        ctx.closePath();
+        ctx.fill();
+
+        // Decorative NASA Blue Trim Wing Accent
+        ctx.fillStyle = '#0052d4';
+        ctx.beginPath();
+        ctx.moveTo(-8, 8);
+        ctx.lineTo(-14, 14);
+        ctx.lineTo(-4, 14);
+        ctx.lineTo(2, 8);
+        ctx.closePath();
+        ctx.fill();
+        // Symmetric top wing
+        ctx.beginPath();
+        ctx.moveTo(-8, -8);
+        ctx.lineTo(-14, -14);
+        ctx.lineTo(-4, -14);
+        ctx.lineTo(2, -8);
+        ctx.closePath();
+        ctx.fill();
+
+        // Astronaut Crew Window Port
+        ctx.fillStyle = '#00d4ff';
+        ctx.strokeStyle = '#2c3e50';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(4, 0, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Thruster Engine Core Unit
+        ctx.fillStyle = '#57606f';
+        ctx.fillRect(-22, -6, 4, 12);
+
+        ctx.restore();
+
+        // Debug Hitbox visualization (Uncomment to view strict calculation boundary)
+        /*
+        ctx.strokeStyle = 'rgba(0,255,0,0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(rocket.x, rocket.y, rocket.radius, 0, Math.PI*2);
+        ctx.stroke();
+        */
+    }
+
+    function drawSatellites() {
+        obstacles.forEach(obs => {
+            // Draw Top Satellite Tower Setup
+            drawSatelliteUnit(obs.x, 0, obs.width, obs.topHeight, true, obs.pulse);
+
+            // Draw Bottom Satellite Tower Setup
+            const botY = canvas.height - obs.bottomHeight;
+            drawSatelliteUnit(obs.x, botY, obs.width, obs.bottomHeight, false, obs.pulse);
+        });
+    }
+
+    function drawSatelliteUnit(x, y, w, h, isTop, pulse) {
+        ctx.save();
+        
+        // Metallic scaffold texturing line gradient
+        let fillGrd = ctx.createLinearGradient(x, 0, x + w, 0);
+        fillGrd.addColorStop(0, '#2f3640');
+        fillGrd.addColorStop(0.3, '#718093');
+        fillGrd.addColorStop(0.7, '#ffeaa7'); // Solar reflection highlights
+        fillGrd.addColorStop(1, '#1e272e');
+        ctx.fillStyle = fillGrd;
+
+        // Base Truss structures
+        ctx.fillRect(x, y, w, h);
+
+        // Core Structuring framework panels (Inner Crossbars)
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.lineWidth = 2;
+        for (let step = 15; step < h; step += 30) {
+            ctx.strokeRect(x + 4, y + (isTop ? step : h - step - 20), w - 8, 20);
+        }
+
+        // Active Golden Solar Array Wings
+        const solarWingY = isTop ? (y + h - 35) : y + 15;
+        const wingOffset = Math.sin(pulse) * 2; // subtle spatial orbit vibration
+
+        let solarGrd = ctx.createLinearGradient(x - 25, 0, x + w + 25, 0);
+        solarGrd.addColorStop(0, '#f1c40f');
+        solarGrd.addColorStop(0.5, '#e67e22');
+        solarGrd.addColorStop(1, '#f1c40f');
+        ctx.fillStyle = solarGrd;
+        
+        // Wing Left
+        ctx.fillRect(x - 28 + wingOffset, solarWingY, 28 - wingOffset, 16);
+        // Wing Right
+        ctx.fillRect(x + w, solarWingY, 28 + wingOffset, 16);
+
+        // Laser/Signal Node Beacons at safe terminal points
+        const beaconY = isTop ? y + h : y;
+        ctx.fillStyle = `rgba(0, 212, 255, ${0.4 + Math.abs(Math.sin(pulse * 2)) * 0.6})`;
+        ctx.beginPath();
+        ctx.arc(x + w/2, beaconY, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Soft outer glow of telemetry node
+        ctx.fillStyle = `rgba(0, 212, 255, 0.15)`;
+        ctx.beginPath();
+        ctx.arc(x + w/2, beaconY, 14, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    function drawHUD() {
+        // Upper telemetry feed typography
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.font = '900 24px "Segoe UI", Arial, sans-serif';
+        ctx.fillText(`${score} AU`, 25, 45);
+
+        ctx.fillStyle = 'rgba(132, 146, 166, 0.7)';
+        ctx.font = '700 12px "Segoe UI", Arial, sans-serif';
+        ctx.fillText(`SYSTEM LOGS: ONLINE`, 25, 65);
+
+        // Energy Reserve Bar Design
+        const barW = 100;
+        const barH = 8;
+        const barX = canvas.width - barW - 25;
+        const barY = 33;
+
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.fillRect(barX, barY, barW, barH);
+
+        let energyGrd = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+        energyGrd.addColorStop(0, '#ff007f');
+        energyGrd.addColorStop(1, '#00d4ff');
+        ctx.fillStyle = energyGrd;
+        ctx.fillRect(barX, barY, barW * (rocket.fuel / 100), barH);
+
+        ctx.fillStyle = 'rgba(132, 146, 166, 0.7)';
+        ctx.font = '700 10px "Segoe UI", Arial, sans-serif';
+        ctx.fillText(`PROPULSION SYS`, barX, 25);
+    }
+
+    // Fire Up Execution Loop
+    window.onload = init;
+</script>
+</body>
+</html>
